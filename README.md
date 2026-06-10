@@ -7,7 +7,7 @@ At 124M scale, firing-pattern matching says no. Muon recovers essentially the Ad
 up to seed noise, but packages it into a hotter, sparser, more crowded, and more
 seed-reproducible residual-stream geometry.
 
-Blog post: link coming with the public release.
+Blog post: https://maincode.com/blog/same-dictionary-different-geometry
 
 ## Headline numbers
 
