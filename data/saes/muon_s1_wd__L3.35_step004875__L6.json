@@ -1,0 +1,19 @@
+{
+ "ckpt": "ckpts/muon_s1_wd/L3.35_step004875.pt",
+ "layer": 6,
+ "expansion": 16,
+ "k": 32,
+ "normalize": false,
+ "raw_act_norm_mean": 67.63899993896484,
+ "tokens": 50003968,
+ "val_tokens": 2031616,
+ "fvu": 0.0797117644080132,
+ "dead_frac_train": 0.0,
+ "dead_frac_val": 0.0400390625,
+ "density_mean": 0.0026041667442768812,
+ "density_p50": 0.0008185601909644902,
+ "density_p99": 0.025645660236477852,
+ "maxcos_mean": 0.33138522505760193,
+ "maxcos_p50": 0.32690441608428955,
+ "maxcos_p95": 0.46944284439086914
+}

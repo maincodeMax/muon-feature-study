@@ -23,16 +23,21 @@ p.add_argument('--tag', default='')
 p.add_argument('--n_layer', type=int, default=12)
 p.add_argument('--n_head', type=int, default=6)
 p.add_argument('--n_embd', type=int, default=768)
+p.add_argument('--sae_seed', type=int, default=0)
+p.add_argument('--gelu', action='store_true')
 a = p.parse_args()
 
 device = 'cuda'
-torch.manual_seed(0)  # identical SAE init + data order for every model; only the model differs
+torch.manual_seed(a.sae_seed)  # identical SAE init + data order for every model unless --sae_seed varies
 
 # ---- load bench checkpoint ----
 d = torch.load(a.ckpt, map_location=device)
 sd = {k.removeprefix('_orig_mod.'): v for k, v in d['model'].items()}
 model = GPT(GPTConfig(vocab_size=50304, n_layer=a.n_layer, n_head=a.n_head, n_embd=a.n_embd))
 model.load_state_dict(sd)
+if a.gelu:
+    for blk in model.transformer.h:
+        blk.mlp.use_gelu = True
 model = model.cuda().bfloat16().eval()
 run_tag = os.path.basename(os.path.dirname(a.ckpt))
 ckpt_tag = os.path.basename(a.ckpt)[:-3]
@@ -146,7 +151,7 @@ with torch.no_grad():
     max_cos = cos.max(dim=1).values
 
 os.makedirs(a.out, exist_ok=True)
-suffix = ('_norm' if a.normalize else '') + (f'_{a.tag}' if a.tag else '')
+suffix = ('_norm' if a.normalize else '') + (f'_saeseed{a.sae_seed}' if a.sae_seed else '') + (f'_{a.tag}' if a.tag else '')
 name = f'{run_tag}__{ckpt_tag}__L{a.layer}{suffix}'
 metrics = dict(
     ckpt=a.ckpt, layer=a.layer, expansion=a.expansion, k=a.k,

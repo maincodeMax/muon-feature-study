@@ -21,18 +21,41 @@ p.add_argument('--run_a', required=True)
 p.add_argument('--run_b', required=True)
 p.add_argument('--layer', type=int, default=6)
 p.add_argument('--tokens', type=int, default=1_000_000)
+p.add_argument('--n_layer', type=int, default=12)
+p.add_argument('--n_head', type=int, default=6)
+p.add_argument('--n_embd', type=int, default=768)
 p.add_argument('--out', default='analysis/saes/xmatch2')
+p.add_argument('--ckpt_a', default=None)
+p.add_argument('--ckpt_b', default=None)
+p.add_argument('--name_suffix', default='')
+p.add_argument('--gelu', action='store_true')
 a = p.parse_args()
 device = 'cuda'
 LAYER = a.layer
-SAES = {tag: (ck, f'analysis/saes/{tag}__{os.path.basename(ck)[:-3]}__L{a.layer}.pt')
-        for tag, ck in CKPTS.items()}
+
+def resolve_ckpt(tag):
+    if tag in CKPTS:
+        return CKPTS[tag]
+    import glob
+    c = sorted(glob.glob(f'ckpts/{tag}/L3.35_*.pt')) or sorted(glob.glob(f'ckpts/{tag}/step005100.pt'))
+    return c[0]
+
+overrides = {}
+if a.ckpt_a: overrides[a.run_a] = a.ckpt_a
+if a.ckpt_b: overrides[a.run_b] = a.ckpt_b
+def ck_for(tag):
+    return overrides.get(tag) or resolve_ckpt(tag)
+SAES = {tag: (ck_for(tag), f'analysis/saes/{tag}__{os.path.basename(ck_for(tag))[:-3]}__L{a.layer}.pt')
+        for tag in set([a.run_a, a.run_b])}
 
 def load_model(ckpt_path):
     d = torch.load(ckpt_path, map_location=device)
     sd = {k.removeprefix('_orig_mod.'): v for k, v in d['model'].items()}
-    m = GPT(GPTConfig(vocab_size=50304, n_layer=12, n_head=6, n_embd=768))
+    m = GPT(GPTConfig(vocab_size=50304, n_layer=a.n_layer, n_head=a.n_head, n_embd=a.n_embd))
     m.load_state_dict(sd)
+    if a.gelu:
+        for blk in m.transformer.h:
+            blk.mlp.use_gelu = True
     return m.cuda().bfloat16().eval()
 
 def load_sae(sae_path):
@@ -70,7 +93,7 @@ with torch.no_grad():
         for tag in (a.run_a, a.run_b):
             model, sae, cap = pair[tag]
             model(x, return_logits=False)
-            acts = cap.pop().reshape(-1, 768).float()
+            acts = cap.pop().reshape(-1, a.n_embd).float()
             cap.clear()
             feats[tag] = encode(sae, acts)
         fa, fb = feats[a.run_a], feats[a.run_b]
@@ -102,7 +125,7 @@ os.makedirs(a.out, exist_ok=True)
 res = dict(run_a=a.run_a, run_b=a.run_b, layer=a.layer, tokens=n,
            n_alive_a=int(aliveA.sum()), n_alive_b=int(aliveB.sum()),
            a_to_b=stats(best_ab), b_to_a=stats(best_ba))
-json.dump(res, open(f'{a.out}/{a.run_a}__{a.run_b}_L{a.layer}.json', 'w'), indent=1)
+json.dump(res, open(f'{a.out}/{a.run_a}__{a.run_b}_L{a.layer}{a.name_suffix}.json', 'w'), indent=1)
 torch.save(dict(best_ab=best_ab.cpu(), best_ba=best_ba.cpu()),
-           f'{a.out}/{a.run_a}__{a.run_b}_L{a.layer}_best.pt')
+           f'{a.out}/{a.run_a}__{a.run_b}_L{a.layer}{a.name_suffix}_best.pt')
 print(json.dumps(res, indent=1))

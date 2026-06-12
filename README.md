@@ -34,7 +34,14 @@ torchrun --standalone --nproc_per_node=8 <extracted>.py --optimizer muon --seed 
 | record | what |
 |---|---|
 | `records/{muon,adamw}_s{0,1,2}/` | the six 124M science runs (3 seeds per optimizer) |
-| `records/{muon,adamw}_s0_350m/` | the 350M spot-check pair (24 layers, d=1024) |
+| `records/{muon,adamw}_s{0,1,2}_350m/` | the 350M scale check (24 layers, d=1024, 3 seeds per optimizer) |
+| `records/{muon,adamw}_s{3,4}/` | two extra 124M seeds per pure arm (10 within-arm pairs) |
+| `records/muonattn_s{0,1,2}{,_w250}/` | hybrid: Muon on attention, AdamW on MLPs (zero-warmup and warmup-250 variants) |
+| `records/muonmlp_s*{,_w250}/` | hybrid: Muon on MLPs, AdamW on attention (both warmup variants, seeds 0-4) |
+| `records/muonmlp{3,6,9}_s{0,1,2}/` | dose-response: Muon on the MLPs of the first k layers only |
+| `records/muon_s{0,1,2}_wd/` | full Muon with decoupled weight decay 0.1 (norm-inflation dissociation) |
+| `records/adamw_s{0,1,2}_switch/` | optimizer switch: Muon for the first 500 steps, AdamW thereafter |
+| `records/{muon,adamw}_s{0,1,2}_gelu/` | activation variant: GeLU in place of squared-ReLU |
 
 Both arms use Keller Jordan's tuned hyperparameters from the
 [2024-10-29 optimizer comparison record](https://github.com/KellerJordan/modded-nanogpt/tree/master/records/track_1_short/2024-10-29_Optimizers):
@@ -52,6 +59,11 @@ Data: FineWeb (first 900M tokens), identical order across all runs; seeds vary i
 | `xmatch2.py`, `xmatch_verdict.py` | basis-free feature matching via firing-pattern correlation |
 | `figures.py`, `cover.py`, `render_draft.py` | figures, bootstrap CIs, draft rendering |
 | `model_def.py` | model/dataloader classes shared by the instruments |
+
+Component-intervention arms inherit each side's tuned configuration unchanged;
+`--warmup_override`, `--muon_wd`, `--muon_mlp_layers`, `--init_from/--start_step`, and `--gelu`
+in `analysis/bench_v1.py` reproduce every arm. `data/transfer/` holds cross-seed SAE transfer
+evaluations and `data/ceiling/` the same-model different-SAE-seed instrument-noise controls.
 
 ## Data (`data/`)
 

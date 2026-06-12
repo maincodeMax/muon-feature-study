@@ -76,8 +76,8 @@ class Muon(torch.optim.Optimizer):
     """
     def __init__(self, params, lr=3e-4, momentum=0.95, nesterov=True,
                  backend='newtonschulz5', backend_steps=5,
-                 rank=0, world_size=1):
-        defaults = dict(lr=lr, momentum=momentum, nesterov=nesterov, backend=backend, backend_steps=backend_steps)
+                 rank=0, world_size=1, weight_decay=0.0):
+        defaults = dict(lr=lr, momentum=momentum, nesterov=nesterov, backend=backend, backend_steps=backend_steps, weight_decay=weight_decay)
         super().__init__(params, defaults)
         self.rank = rank
         self.world_size = world_size
@@ -115,10 +115,13 @@ class Muon(torch.optim.Optimizer):
             # sync updates across devices. we are not memory-constrained so can do this simple deserialization
             dist.all_reduce(updates_flat, op=dist.ReduceOp.SUM)
 
-            # deserialize and apply updates
+            # deserialize and apply updates (with decoupled weight decay)
+            wd = group.get('weight_decay', 0.0)
             curr_idx = 0
             for p in group['params']:
                 g = updates_flat[curr_idx:curr_idx+p.numel()].view_as(p.data).type_as(p.data)
+                if wd > 0:
+                    p.data.mul_(1 - lr * wd)
                 p.data.add_(g, alpha=-lr)
                 curr_idx += p.numel()
 
@@ -192,7 +195,10 @@ class MLP(nn.Module):
 
     def forward(self, x):
         x = self.c_fc(x)
-        x = F.relu(x).square() # https://arxiv.org/abs/2109.08668v2; ~1-2% better than GELU; suggested by @SKYLINEZ007 and @Grad62304977
+        if getattr(self, 'use_gelu', False):
+            x = F.gelu(x)
+        else:
+            x = F.relu(x).square() # https://arxiv.org/abs/2109.08668v2; ~1-2% better than GELU; suggested by @SKYLINEZ007 and @Grad62304977
         x = self.c_proj(x)
         return x
 
@@ -357,18 +363,27 @@ args = Hyperparameters()
 
 import argparse
 cli = argparse.ArgumentParser()
-cli.add_argument('--optimizer', choices=['adamw', 'muon'], required=True)
+cli.add_argument('--optimizer', choices=['adamw', 'muon', 'soap', 'muonattn', 'muonmlp'], required=True)
 cli.add_argument('--seed', type=int, required=True)
 cli.add_argument('--n_layer', type=int, default=12)
 cli.add_argument('--n_head', type=int, default=6)
 cli.add_argument('--n_embd', type=int, default=768)
 cli.add_argument('--run_suffix', default='')
 cli.add_argument('--device_batch_size', type=int, default=64)
+cli.add_argument('--warmup_override', type=int, default=-1)
+cli.add_argument('--muon_mlp_layers', type=int, default=-1)  # muonmlp only: Muon on MLPs of first k layers
+cli.add_argument('--muon_wd', type=float, default=0.0)
+cli.add_argument('--init_from', default=None)   # checkpoint to warm-start from
+cli.add_argument('--start_step', type=int, default=0)  # resume step (data fast-forwarded)
+cli.add_argument('--gelu', action='store_true')  # GeLU MLP activation (architecture-variant control)
 cli_args = cli.parse_args()
 args.device_batch_size = cli_args.device_batch_size
-# Keller's tuned warmup per arm (2024-10-29_Optimizers record): 250 for AdamW, 0 for Muon
-args.warmup_iters = 250 if cli_args.optimizer == 'adamw' else 0
-run_tag = f'{cli_args.optimizer}_s{cli_args.seed}{cli_args.run_suffix}'
+# Keller's tuned warmup per arm (2024-10-29_Optimizers record): 250 for AdamW/SOAP, 0 for Muon
+args.warmup_iters = 0 if cli_args.optimizer in ('muon', 'muonattn', 'muonmlp') else 250
+if cli_args.warmup_override >= 0:
+    args.warmup_iters = cli_args.warmup_override
+opt_tag = cli_args.optimizer + (str(cli_args.muon_mlp_layers) if cli_args.muon_mlp_layers >= 0 else '')
+run_tag = f'{opt_tag}_s{cli_args.seed}{cli_args.run_suffix}'
 
 # checkpoint schedule: loss waypoints for matched-loss comparison, fixed steps for emergence timing
 LOSS_WAYPOINTS = [3.8, 3.6, 3.5, 3.4, 3.35, 3.3]
@@ -408,6 +423,13 @@ x, y = train_loader.next_batch()
 num_vocab = 50304
 torch.manual_seed(cli_args.seed) # seed varies init only; data order is identical across runs
 model = GPT(GPTConfig(vocab_size=num_vocab, n_layer=cli_args.n_layer, n_head=cli_args.n_head, n_embd=cli_args.n_embd))
+if cli_args.gelu:
+    for blk in model.transformer.h:
+        blk.mlp.use_gelu = True
+if cli_args.init_from is not None:
+    _ck = torch.load(cli_args.init_from, map_location='cpu')
+    _sd = {k.removeprefix('_orig_mod.'): v.float() for k, v in _ck['model'].items()}
+    model.load_state_dict(_sd)
 model = model.cuda()
 if hasattr(config, "coordinate_descent_tuning"):
     config.coordinate_descent_tuning = True # suggested by @Chillee
@@ -420,13 +442,34 @@ ctx = torch.amp.autocast(device_type='cuda', dtype=torch.bfloat16)
 # init the optimizer(s)
 optimizer1 = torch.optim.AdamW(raw_model.lm_head.parameters(), lr=args.embed_learning_rate, betas=(0.9, 0.95),
                                weight_decay=args.weight_decay, fused=True)
+attn_params = [p for n, p in raw_model.transformer.h.named_parameters() if '.attn.' in n]
+mlp_params = [p for n, p in raw_model.transformer.h.named_parameters() if '.mlp.' in n]
 if cli_args.optimizer == 'muon':
     optimizer2 = Muon(raw_model.transformer.h.parameters(), lr=args.muon_learning_rate, momentum=0.95,
+                      rank=ddp_rank, world_size=ddp_world_size, weight_decay=cli_args.muon_wd)
+elif cli_args.optimizer in ('muonattn', 'muonmlp'):
+    # hybrid arms: Muon on one component class, AdamW (Keller's tuned hidden-layer config) on the other
+    if cli_args.optimizer == 'muonattn':
+        muon_side, adamw_side = attn_params, mlp_params
+    else:
+        k = cli_args.muon_mlp_layers if cli_args.muon_mlp_layers >= 0 else len(raw_model.transformer.h)
+        mlp_muon = [p for n, p in raw_model.transformer.h.named_parameters()
+                    if '.mlp.' in n and int(n.split('.')[0]) < k]
+        mlp_adamw = [p for n, p in raw_model.transformer.h.named_parameters()
+                     if '.mlp.' in n and int(n.split('.')[0]) >= k]
+        muon_side, adamw_side = mlp_muon, attn_params + mlp_adamw
+    optimizer2 = Muon(muon_side, lr=args.muon_learning_rate, momentum=0.95,
                       rank=ddp_rank, world_size=ddp_world_size)
+    optimizer3 = torch.optim.AdamW(adamw_side, lr=0.5*args.embed_learning_rate, betas=(0.9, 0.95),
+                                   weight_decay=args.weight_decay, fused=True)
+elif cli_args.optimizer == 'soap':
+    from soap import SOAP
+    # Keller's tuned SOAP arm (2024-10-29_Optimizers record)
+    optimizer2 = SOAP(raw_model.transformer.h.parameters(), lr=0.0018, betas=(.95, .95), precondition_frequency=10)
 else:
     optimizer2 = torch.optim.AdamW(raw_model.transformer.h.parameters(), lr=0.5*args.embed_learning_rate, betas=(0.9, 0.95),
                                    weight_decay=args.weight_decay, fused=True)
-optimizers = [optimizer1, optimizer2]
+optimizers = [optimizer1, optimizer2] + ([optimizer3] if cli_args.optimizer in ('muonattn', 'muonmlp') else [])
 # learning rate decay scheduler (linear warmup and warmdown)
 def get_lr(it):
     assert it <= args.num_iterations
@@ -470,7 +513,10 @@ torch.cuda.synchronize()
 t0 = time.time()
 # begin training
 train_loader.reset()
-for step in range(args.num_iterations + 1):
+if cli_args.start_step > 0:
+    for _ in range(cli_args.start_step * train_accumulation_steps):
+        x, y = train_loader.next_batch()
+for step in range(cli_args.start_step, args.num_iterations + 1):
     last_step = (step == args.num_iterations)
     # This effectively ignores timing first 10 steps, which are slower for weird reasons.
     # Alternately, and slightly more correctly in terms of benchmarking, we could do 10
