@@ -1,0 +1,31 @@
+{
+ "run": "muon_s2",
+ "rms": 154.10296630859375,
+ "results": {
+  "0.0": {
+   "fvu": 0.1213,
+   "fire_overlap": 1.0,
+   "value_corr": 1.0
+  },
+  "0.05": {
+   "fvu": 0.1217,
+   "fire_overlap": 0.9617,
+   "value_corr": 0.9986
+  },
+  "0.1": {
+   "fvu": 0.1227,
+   "fire_overlap": 0.927,
+   "value_corr": 0.9969
+  },
+  "0.2": {
+   "fvu": 0.127,
+   "fire_overlap": 0.8571,
+   "value_corr": 0.9926
+  },
+  "0.4": {
+   "fvu": 0.149,
+   "fire_overlap": 0.7139,
+   "value_corr": 0.9806
+  }
+ }
+}

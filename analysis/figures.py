@@ -1,4 +1,4 @@
-# Produce the three blog figures + bootstrap CIs for the matching result.
+# Produce figures + bootstrap CIs for the feature matching result.
 import glob, json, os, re
 import torch
 import matplotlib

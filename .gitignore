@@ -1,0 +1,26 @@
+# Model artifacts (too large for git, use OpenReview ZIP)
+*.pt
+*.bin
+*.safetensors
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+
+# OS
+.DS_Store
+._*
+
+# IDE
+.vscode/
+.idea/
+
+# Training logs (submitted via OpenReview, not git)
+*.log
+logs/
+
+# Data (too large, use OpenReview ZIP)
+data/fineweb10B/

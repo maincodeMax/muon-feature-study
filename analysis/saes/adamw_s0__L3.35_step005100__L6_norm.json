@@ -1,0 +1,19 @@
+{
+ "ckpt": "ckpts/adamw_s0/L3.35_step005100.pt",
+ "layer": 6,
+ "expansion": 16,
+ "k": 32,
+ "normalize": true,
+ "raw_act_norm_mean": 706.62255859375,
+ "tokens": 50003968,
+ "val_tokens": 2031616,
+ "fvu": 0.14294355151751123,
+ "dead_frac_train": 0.0,
+ "dead_frac_val": 0.0189615897834301,
+ "density_mean": 0.0026041667442768812,
+ "density_p50": 0.0008126535685732961,
+ "density_p99": 0.02824527956545353,
+ "maxcos_mean": 0.2853507995605469,
+ "maxcos_p50": 0.27880677580833435,
+ "maxcos_p95": 0.41754764318466187
+}

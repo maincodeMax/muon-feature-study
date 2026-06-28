@@ -28,6 +28,7 @@ p.add_argument('--out', default='analysis/saes/xmatch2')
 p.add_argument('--ckpt_a', default=None)
 p.add_argument('--ckpt_b', default=None)
 p.add_argument('--name_suffix', default='')
+p.add_argument('--sae_suffix', default='')
 p.add_argument('--gelu', action='store_true')
 a = p.parse_args()
 device = 'cuda'
@@ -45,7 +46,7 @@ if a.ckpt_a: overrides[a.run_a] = a.ckpt_a
 if a.ckpt_b: overrides[a.run_b] = a.ckpt_b
 def ck_for(tag):
     return overrides.get(tag) or resolve_ckpt(tag)
-SAES = {tag: (ck_for(tag), f'analysis/saes/{tag}__{os.path.basename(ck_for(tag))[:-3]}__L{a.layer}.pt')
+SAES = {tag: (ck_for(tag), f'analysis/saes/{tag}__{os.path.basename(ck_for(tag))[:-3]}__L{a.layer}{a.sae_suffix}.pt')
         for tag in set([a.run_a, a.run_b])}
 
 def load_model(ckpt_path):

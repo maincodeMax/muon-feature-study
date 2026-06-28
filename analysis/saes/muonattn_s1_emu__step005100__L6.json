@@ -1,0 +1,19 @@
+{
+ "ckpt": "ckpts/muonattn_s1_emu/step005100.pt",
+ "layer": 6,
+ "expansion": 16,
+ "k": 32,
+ "normalize": false,
+ "raw_act_norm_mean": 323.73468017578125,
+ "tokens": 50003968,
+ "val_tokens": 2031616,
+ "fvu": 0.15389937584672125,
+ "dead_frac_train": 0.0013020833721384406,
+ "dead_frac_val": 0.3653157651424408,
+ "density_mean": 0.0026041667442768812,
+ "density_p50": 0.0005109233316034079,
+ "density_p99": 0.02320050075650215,
+ "maxcos_mean": 0.24487118422985077,
+ "maxcos_p50": 0.23825325071811676,
+ "maxcos_p95": 0.4084586501121521
+}

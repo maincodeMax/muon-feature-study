@@ -1,77 +1,159 @@
-# Same Dictionary, Different Geometry
+# Where Muon's Advantage Lives
 
-Reproducible logs, code, and data for a study of what Muon actually changes inside
-a language model. Recent work shows Muon representations are more robust and transferable
-(arXiv:2606.09658). We ask what that means anatomically: are the sparse features different?
-At 124M scale, firing-pattern matching says no. Muon recovers essentially the AdamW feature set
-up to seed noise, but packages it into a hotter, sparser, more crowded, and more
-seed-reproducible residual-stream geometry.
+Small-scale causal localization of an optimizer's effect on learned features.
 
-Blog post: https://maincode.com/blog/same-dictionary-different-geometry
+This repository contains the training code, analysis scripts, and figure data for a study of
+Muon vs. AdamW on a 124M-parameter language model. The study uses sparse-autoencoder (SAE)
+feature matching by firing-pattern correlation, component-targeted optimizer reassignment
+(value circuit vs. scoring circuit), and stable-rank analysis to localize where Muon's
+advantage acts.
 
-## Headline numbers
+## Headline results
 
-- Final FineWeb val loss, 5,100 steps, 3 seeds: Muon 3.292 ± 0.001, AdamW 3.350 ± 0.002.
-- Weight stable rank at matched loss: Muon 1.7–10× AdamW, every weight class; survives W−W_init.
-- SAE feature matching over 1M shared tokens (mean best activation correlation):
-  Muon↔Muon **0.618** > Muon↔AdamW **0.599** ≈ AdamW↔AdamW **0.594**.
-  Crossing the optimizer costs no more than crossing the seed; Muon is the more reproducible recipe.
-- Packaging at matched loss: residual stream 4–7× hotter, 4–5× more dead SAE features,
-  rarer firing, tighter decoder crowding. Replicates at layer 9 (26×) and, except for the
-  config-sensitive dead-feature metric, at a 350M single-seed spot check.
+- **Feature identity is seed-ceiling limited.** Cross-optimizer SAE feature agreement (0.599)
+  meets the within-AdamW seed ceiling (0.594), while within-Muon (0.618) exceeds both.
+- **Muon is more reproducible, set early.** The within-Muon reproducibility advantage is fully
+  formed by step 500 (one tenth of training); a 500-step Muon warm-up followed by AdamW
+  retains it.
+- **Muon on the value circuit (W_V W_O) is largely sufficient.** muon-VO recovers ~86% of the
+  loss gap and full reproducibility; muon-QK recovers neither despite raising scoring-circuit
+  stable rank to near-full-Muon levels.
+- **Endpoint rank is not a sufficient knob.** Promoting W_OV stable rank under AdamW reaches
+  Muon-level rank but recovers none of the advantage.
 
-## Reproducible logs (`records/`)
-
-Following the [modded-nanogpt](https://github.com/KellerJordan/modded-nanogpt) convention:
-each log embeds the complete training source, environment info, and full loss curve.
-To reproduce a run, cut the code block out of the log and launch it with the `run.sh`
-pattern from modded-nanogpt (8 GPUs):
+## Repository structure
 
 ```
-torchrun --standalone --nproc_per_node=8 <extracted>.py --optimizer muon --seed 0
+├── bench_v1.py              # Main trainer (GPT-2 124M, Muon/AdamW/hybrid arms)
+├── run_muon.py              # Muon training entry point
+├── run_adam.py              # AdamW training entry point
+├── soap.py                  # SOAP optimizer implementation
+├── train_gpt.py             # Original modded-nanogpt trainer
+├── triton_kernels.py        # Triton kernel implementations
+├── analysis/
+│   ├── circuits.py          # Attention circuit stable-rank analysis (W_QK, W_OV)
+│   ├── cka.py               # CKA (centered kernel alignment) comparison
+│   ├── xmatch.py             # Feature matching via firing-pattern correlation
+│   ├── xmatch2.py           # Pairwise feature matching (v2, clustered CIs)
+│   ├── xmatch_verdict.py    # Matching result aggregation
+│   ├── sae_v1.py            # Streaming top-k SAE training
+│   ├── sae_table.py         # SAE dictionary demographics table
+│   ├── sae_transfer.py      # Cross-seed SAE transfer evaluation
+│   ├── sae_noise_ceiling.py # Same-model different-SAE-seed noise ceiling
+│   ├── spectra.py           # Weight SVD spectra analysis
+│   ├── spectra_delta.py     # W − W_init spectral delta
+│   ├── compare_sr.py        # Stable-rank comparison across arms
+│   ├── loss_surface.py      # Loss surface visualization
+│   ├── figures.py           # Figure generation + bootstrap CIs
+│   ├── fig_paper.py         # Paper figure generation
+│   ├── cover.py             # Cover image generation
+│   ├── dump_ci.py           # CI dump for layer 6
+│   ├── dump_ci9.py          # CI dump for layer 9
+│   ├── debug_sr.py          # Stable-rank debugging
+│   ├── noise_robust.py      # SAE noise robustness analysis
+│   ├── surface_merge.py    # Loss surface merge utility
+│   ├── model_def.py        # Shared model/dataloader definitions
+│   ├── figs/                # Figure data (JSON) + rendered figures (PNG/PDF)
+│   │   ├── pair_cis_L6.json  # Layer 6 feature match CIs (Fig 1a)
+│   │   ├── pair_cis_L9.json  # Layer 9 feature match CIs (Appendix B)
+│   │   ├── surface_rows_*.json # Loss surface data
+│   │   ├── circuits/          # Circuit stable-rank data (Fig 2)
+│   │   ├── cka/               # CKA comparison results
+│   │   ├── ceiling/           # SAE noise ceiling results
+│   │   ├── noise/             # SAE noise robustness results
+│   │   └── transfer/          # Cross-seed SAE transfer results
+│   ├── saes/                # SAE configs and pairwise matching results (JSON)
+│   │   └── xmatch2/          # Pairwise matching results (JSON)
+│   └── spectra/             # Singular value summaries (JSON)
+├── scripts/                # Run scripts for all experiment arms
+│   ├── run_sweep1.sh        # Main 3-seed muon+adamw runs
+│   ├── run_hybrid.sh        # muonattn + muonmlp arms + SAEs + matchings
+│   ├── run_overnight.sh     # Warmup controls, extra seeds, dose response
+│   ├── run_ov.sh            # OV rank-reg sweep + muon-QK LR sweep
+│   ├── run_vo_split.sh      # W_V-only vs W_O-only split
+│   ├── run_writegate.sh    # MLP write-gate vs read-gate split
+│   ├── run_qknorm.sh        # QK-norm ablation (no QK-norm, 4 arms × 2 seeds)
+│   ├── run_review.sh        # Weight-decay, optimizer-switch, SAE ceilings
+│   ├── run_filler.sh        # Loss-matched SAEs, gelu arms, 350M seeds
+│   ├── run_filler2.sh       # Remaining gelu + 350M runs
+│   ├── run_wave1.sh         # EMu composite, NS budget, Lion probe
+│   ├── run_wave2.sh         # EMu-v2, switch+ramp, NS dose seeds
+│   ├── run_350m.sh          # 350M scale check
+│   ├── run_remain.sh        # 350M muonqk + muonvo
+│   ├── run_timing.sh        # Timing benchmark (ms/step + peak mem)
+│   └── ...                  # Other run scripts
+├── records/                # Reproducible training logs (modded-nanogpt format)
+├── data/                    # Structured analysis data (matching, CKA, spectra)
+├── figures/                 # Rendered figures
+├── Dockerfile               # Training environment
+├── requirements.txt         # Python dependencies
+└── .gitignore
 ```
 
-| record | what |
-|---|---|
-| `records/{muon,adamw}_s{0,1,2}/` | the six 124M science runs (3 seeds per optimizer) |
-| `records/{muon,adamw}_s{0,1,2}_350m/` | the 350M scale check (24 layers, d=1024, 3 seeds per optimizer) |
-| `records/{muon,adamw}_s{3,4}/` | two extra 124M seeds per pure arm (10 within-arm pairs) |
-| `records/muonattn_s{0,1,2}{,_w250}/` | hybrid: Muon on attention, AdamW on MLPs (zero-warmup and warmup-250 variants) |
-| `records/muonmlp_s*{,_w250}/` | hybrid: Muon on MLPs, AdamW on attention (both warmup variants, seeds 0-4) |
-| `records/muonmlp{3,6,9}_s{0,1,2}/` | dose-response: Muon on the MLPs of the first k layers only |
-| `records/muon_s{0,1,2}_wd/` | full Muon with decoupled weight decay 0.1 (norm-inflation dissociation) |
-| `records/adamw_s{0,1,2}_switch/` | optimizer switch: Muon for the first 500 steps, AdamW thereafter |
-| `records/{muon,adamw}_s{0,1,2}_gelu/` | activation variant: GeLU in place of squared-ReLU |
+## Model configuration
 
-Both arms use Keller Jordan's tuned hyperparameters from the
-[2024-10-29 optimizer comparison record](https://github.com/KellerJordan/modded-nanogpt/tree/master/records/track_1_short/2024-10-29_Optimizers):
-AdamW lr 0.0018 β=(0.9, 0.95) warmup 250, Muon lr 0.02 momentum 0.95 warmup 0,
-zero weight decay, trapezoidal schedule, embed/head on AdamW in both arms.
-Data: FineWeb (first 900M tokens), identical order across all runs; seeds vary init only.
+- **Architecture:** GPT-2 class (12 layers, d=768, 6 heads, head_dim=128, vocab=50304)
+- **Attention:** softmax with rotary embeddings (RoPE) and QK-norm
+- **Training:** 5,100 steps, batch_size=512 (8×64), sequence_length=1024
+- **Data:** FineWeb (first 900M training tokens, 100M validation), identical order across seeds
+- **Hardware:** 8× NVIDIA B200 (single node)
 
-## Code (`analysis/`)
+## Optimizer configurations
 
-| script | role |
-|---|---|
-| `bench_v1.py` | trainer (10/18/24 record + optimizer flag, seeds, waypoint checkpoints) |
-| `spectra.py`, `spectra_delta.py`, `compare_sr.py` | weight SVD spectra, W−W_init variant |
-| `sae_v1.py` | streaming top-k SAE (16×, k=32, 50M tokens), identical across models |
-| `xmatch2.py`, `xmatch_verdict.py` | basis-free feature matching via firing-pattern correlation |
-| `figures.py`, `cover.py`, `render_draft.py` | figures, bootstrap CIs, draft rendering |
-| `model_def.py` | model/dataloader classes shared by the instruments |
+Both recipes independently tuned (no under-tuned-baseline confound), following the
+[modded-nanogpt](https://github.com/KellerJordan/modded-nanogpt) optimizer comparison:
 
-Component-intervention arms inherit each side's tuned configuration unchanged;
-`--warmup_override`, `--muon_wd`, `--muon_mlp_layers`, `--init_from/--start_step`, and `--gelu`
-in `analysis/bench_v1.py` reproduce every arm. `data/transfer/` holds cross-seed SAE transfer
-evaluations and `data/ceiling/` the same-model different-SAE-seed instrument-noise controls.
+| Optimizer | LR | Momentum | Warmup | Weight decay |
+|---|---|---|---|---|
+| Muon | 0.02 | 0.95 (Nesterov) | 0 steps | 0 |
+| AdamW | 0.0018 | (0.9, 0.95) | 250 steps | 0 |
 
-## Data (`data/`)
+Embeddings and LM head use AdamW in all arms. Component-targeted arms (muon-VO, muon-QK,
+muon-attn) apply Muon to the specified circuit's weights and AdamW elsewhere, with matched
+250-step warmup.
 
-Per-SAE metrics (22 SAEs across layers 3/6/9, normalization control, 350M), all 45+ pairwise
-matching results (layers 6 and 9), and per-run spectra summaries. Every figure and table in
-the post regenerates from these files; see `analysis/figures.py`.
+## Reproducing a run
 
-## Hardware
+```bash
+# Setup
+pip install -r requirements.txt
 
-All runs on a single 8×NVIDIA B200 node. One 124M run ≈ 8 minutes; the full
-six-run science sweep ≈ 65 minutes; every SAE and matching batch parallelizes one-per-GPU.
+# Train Muon seed 0 (8 GPUs)
+torchrun --standalone --nproc_per_node=8 bench_v1.py --optimizer muon --seed 0
+
+# Train AdamW seed 0
+torchrun --standalone --nproc_per_node=8 bench_v1.py --optimizer adamw --seed 0
+
+# Component-targeted: Muon on value circuit only
+torchrun --standalone --nproc_per_node=8 bench_v1.py --optimizer muonvo --seed 0 --warmup_override 250
+```
+
+## Analysis pipeline
+
+```bash
+# SAE training (layer 6, 50M tokens, top-k=32)
+python analysis/sae_v1.py --ckpt ckpts/muon_s0/L3.35_step004375.pt --tokens 50000000
+
+# Feature matching (pairwise, 1M shared tokens)
+python analysis/xmatch2.py --run_a muon_s0 --run_b muon_s1 --tokens 1000000
+
+# Circuit stable ranks
+python analysis/circuits.py --tags muon_s0 adamw_s0 muonvo_s0 muonqk_s0
+
+# CKA comparison
+python analysis/cka.py --run_a muon_s0 --run_b adamw_s0
+
+# Weight spectra
+python analysis/spectra.py --run muon_s0
+```
+
+## Compute budget
+
+- Main model: 124M parameters, 5,100 steps, ~2.67B tokens per run
+- Per-run FLOPs: ~6 × 124M × 2.67B ≈ 1.99 × 10^18
+- Total experimental FLOPs (all arms): ~2.2 × 10^20
+- Wall-clock: ~8 min per 124M run on 8× B200
+
+## License
+
+MIT

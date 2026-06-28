@@ -1,0 +1,19 @@
+{
+ "ckpt": "ckpts/soap_s0/L3.35_step004500.pt",
+ "layer": 6,
+ "expansion": 16,
+ "k": 32,
+ "normalize": true,
+ "raw_act_norm_mean": 603.4402465820312,
+ "tokens": 50003968,
+ "val_tokens": 2031616,
+ "fvu": 0.12339298893277716,
+ "dead_frac_train": 0.00016276042151730508,
+ "dead_frac_val": 0.348876953125,
+ "density_mean": 0.0026041665114462376,
+ "density_p50": 0.0003568587708286941,
+ "density_p99": 0.028428709134459496,
+ "maxcos_mean": 0.25479429960250854,
+ "maxcos_p50": 0.25425416231155396,
+ "maxcos_p95": 0.41893768310546875
+}

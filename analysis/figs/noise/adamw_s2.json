@@ -1,0 +1,31 @@
+{
+ "run": "adamw_s2",
+ "rms": 24.653972625732422,
+ "results": {
+  "0.0": {
+   "fvu": 0.1218,
+   "fire_overlap": 1.0,
+   "value_corr": 1.0
+  },
+  "0.05": {
+   "fvu": 0.1223,
+   "fire_overlap": 0.9579,
+   "value_corr": 0.9991
+  },
+  "0.1": {
+   "fvu": 0.1236,
+   "fire_overlap": 0.9193,
+   "value_corr": 0.998
+  },
+  "0.2": {
+   "fvu": 0.1293,
+   "fire_overlap": 0.8413,
+   "value_corr": 0.995
+  },
+  "0.4": {
+   "fvu": 0.1599,
+   "fire_overlap": 0.684,
+   "value_corr": 0.9863
+  }
+ }
+}
