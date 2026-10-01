@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Where Muon’s Advantage Lives</title>
+<meta name="description" content="Muon versus AdamW on a 124M GPT-2-class model: features match at the seed ceiling, and the optimizer's gain lives in the attention value circuit. MOSS @ COLM 2026.">
+<meta property="og:title" content="Where Muon’s Advantage Lives">
+<meta property="og:description" content="Small-scale causal localization of an optimizer’s effect on learned features. MOSS @ COLM 2026.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://maincodemax.github.io/muon-feature-study/">
+<meta property="og:image" content="https://maincodemax.github.io/muon-feature-study/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#0a0a0a">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&family=Spectral:ital,wght@0,300;0,400;0,500;1,300;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="slug">
+    <span class="mark"><img src="maincode-logo.svg" alt="" width="26" height="19">Maincode Technical Report</span>
+    <span>MOSS @ COLM 2026 · San Francisco</span>
+  </div>
+  <hr class="double">
+
+  <h1>Where Muon’s Advantage Lives</h1>
+  <p class="subtitle">Small-scale causal localization of an optimizer’s effect on learned features</p>
+
+  <p class="authors">
+    Maxwell Twelftree, David Lemphers, Zeyu Zhang <span class="amp">&amp;</span> Yue Yang
+  </p>
+  <p class="affil">Maincode, Melbourne, Australia · <a href="mailto:max@maincode.com">max@maincode.com</a></p>
+
+  <nav class="links" aria-label="Paper resources">
+    <a href="https://openreview.net/forum?id=j9bpNGbHDS">Paper</a>
+    <a href="https://github.com/maincodeMax/muon-feature-study">Code &amp; logs</a>
+    <a href="poster.pdf">Poster</a>
+    <span class="soon" title="Recorded talk, coming soon">Talk <small>(soon)</small></span>
+    <a href="#cite">Cite</a>
+  </nav>
+</header>
+
+<main>
+
+  <section class="lede" aria-label="Summary">
+    <p class="label">In short</p>
+    <p>
+      We trained the same 124M language model with two optimizers, <em class="muon">Muon</em> and <em class="adam">AdamW</em>, and compared what they learned.
+      The features agree across optimizers <strong>about as well as AdamW agrees with itself across random seeds</strong>.
+      Muon’s training gain, and its more reproducible features, come almost entirely from one place:
+      the attention <strong>value circuit</strong>, W<sub>V</sub>W<sub>O</sub>.
+    </p>
+  </section>
+
+  <section id="question">
+    <h2><span class="sec">§1</span>The question</h2>
+    <p>
+      Muon replaces each momentum update with its nearest orthogonal matrix. It trains language models faster than AdamW, and it leaves a visible fingerprint on the weights: flatter singular spectra and higher stable rank.
+    </p>
+    <aside class="note">
+      <span class="label">Muon, in one line</span>
+      With momentum M = UΣV<sup>T</sup>, step along W ← W − η·UV<sup>T</sup>. Every singular value of the step is set to 1, so no direction dominates.
+    </aside>
+    <p>
+      That raises two questions. Does the optimizer change <em>which features</em> a model learns, or only how it stores them? And if Muon helps, <em>where</em> inside a transformer does the useful part act?
+    </p>
+  </section>
+
+  <section id="method">
+    <h2><span class="sec">§2</span>Comparing features across models</h2>
+    <p>
+      We train an identical top-k sparse autoencoder on layer 6 of every model (12,288 features, k = 32). Their decoder directions don’t line up, even between two seeds of the same optimizer (mean best cosine 0.14), so we compare <em>behaviour</em> instead: two features match if they fire on the same tokens.
+    </p>
+    <figure class="fig" id="fig-toy">
+      <div class="chart" data-chart="toy" role="img" aria-label="Toy example: feature i in model A fires on cat, mat and dog; feature j1 in model B fires on the same tokens and matches with correlation 0.93, while j2 and j3 do not."></div>
+      <figcaption><b>Fig. 1</b> Toy example. Each feature takes its best Pearson ρ with any feature of the other model, over 1M shared held-out tokens.</figcaption>
+    </figure>
+    <p>
+      Averaging that score over live features gives a <strong>feature match</strong> between two models. Two seeds of the same optimizer set the ceiling; the same score with tokens misaligned is 0.024. All comparisons are at matched validation loss (Muon step 4,375, AdamW step 5,100).
+    </p>
+  </section>
+
+  <section id="result-1">
+    <h2><span class="sec">§3</span>The features match, at the seed ceiling</h2>
+    <figure class="fig">
+      <div class="chart" data-chart="dots" role="img" aria-label="Feature match by seed pair: Muon versus Muon 0.618, Muon versus AdamW 0.592, AdamW versus AdamW 0.593."></div>
+      <figcaption><b>Fig. 2</b> Layer-6 feature match, one dot per seed pair. Crossing the optimizer (0.592) costs no more than crossing the seed (0.593). Muon’s own seeds agree more (0.618).</figcaption>
+    </figure>
+    <aside class="note">
+      <span class="label">A careful claim</span>
+      This is non-inferiority to the AdamW seed ceiling under one protocol (top-k SAEs, firing-pattern matching), not a claim that the two optimizers share an optimizer-independent set of features.
+    </aside>
+    <p>
+      The geometry is different all the same. Muon’s weight stable ranks are 1.6–5.3× AdamW’s and its residual stream is 5–7× larger. What it buys is <strong>reproducibility</strong>: Muon lands on more nearly the same features from seed to seed, and that gap opens early.
+    </p>
+    <figure class="fig">
+      <div class="chart" data-chart="early" role="img" aria-label="Seed-pair match over training: Muon stays above AdamW from step 500. Running Muon for 500 steps and then switching to AdamW keeps the gap at 0.629."></div>
+      <figcaption><b>Fig. 3</b> Seed-pair match over training, both seeds compared at the same step. The gap is set by step 500; 500 Muon steps followed by AdamW keep it (0.629).</figcaption>
+    </figure>
+  </section>
+
+  <section id="result-2">
+    <h2><span class="sec">§4</span>Where the advantage lives</h2>
+    <p>
+      An attention head factors into two circuits: a <strong>scoring</strong> circuit W<sub>Q</sub>W<sub>K</sub><sup>T</sup> that decides where to look, and a <strong>value</strong> circuit W<sub>V</sub>W<sub>O</sub> that decides what gets written. We keep the architecture and data fixed and give Muon only some of the matrices, AdamW the rest. Try it: each switch below is a real training arm (three seeds).
+    </p>
+
+    <div class="bench" id="bench">
+      <div class="block" role="group" aria-label="Which matrices get Muon">
+        <p class="block-title">One transformer block <span>· tap to hand a circuit to Muon</span></p>
+        <div class="row">
+          <span class="row-label">attention</span>
+          <button class="stamp" data-k="qk" aria-pressed="false">
+            <span class="m">W<sub>Q</sub> W<sub>K</sub></span><span class="role">scoring</span><span class="opt"></span>
+          </button>
+          <button class="stamp" data-k="vo" aria-pressed="false">
+            <span class="m">W<sub>V</sub> W<sub>O</sub></span><span class="role">value</span><span class="opt"></span>
+          </button>
+        </div>
+        <div class="row">
+          <span class="row-label">mlp</span>
+          <button class="stamp wide" data-k="mlp" aria-pressed="false">
+            <span class="m">W<sub>in</sub> W<sub>out</sub></span><span class="role">mlp</span><span class="opt"></span>
+          </button>
+        </div>
+        <div class="presets">
+          <button class="preset" data-preset="000">all AdamW</button>
+          <button class="preset" data-preset="111">all Muon</button>
+        </div>
+      </div>
+
+      <div class="readout" aria-live="polite">
+        <p class="arm-name"><span id="arm-name">full AdamW</span> <span class="arm-sub" id="arm-sub"></span></p>
+        <div class="scale" data-scale="loss">
+          <div class="scale-head"><span>final validation loss</span><span class="better">better →</span></div>
+          <div class="track">
+            <span class="ref adam" data-ref="3.350"><i></i><b>AdamW</b></span>
+            <span class="ref muon" data-ref="3.292"><i></i><b>Muon</b></span>
+            <span class="rider"><span class="pin"><span class="val" id="loss-val">3.350</span></span></span>
+          </div>
+        </div>
+        <div class="scale" data-scale="rep">
+          <div class="scale-head"><span>seed reproducibility</span><span class="better">better →</span></div>
+          <div class="track">
+            <span class="ref adam" data-ref="0.593"><i></i><b>AdamW</b></span>
+            <span class="ref muon" data-ref="0.618"><i></i><b>Muon</b></span>
+            <span class="rider"><span class="pin"><span class="val" id="rep-val">0.593</span></span></span>
+          </div>
+        </div>
+        <p class="verdict" id="verdict">The baseline. Hand a circuit to Muon to see what it buys.</p>
+        <p class="ranks" id="ranks"></p>
+      </div>
+    </div>
+
+    <ul class="findings">
+      <li><b>Sufficient.</b> Muon on W<sub>V</sub>W<sub>O</sub> alone recovers 86% of the loss gap and gives the most reproducible features of any arm (0.632).</li>
+      <li><b>Necessary for the loss.</b> Muon on everything <em>except</em> W<sub>V</sub>W<sub>O</sub> recovers none of the loss gain (3.369, slightly behind AdamW).</li>
+      <li><b>A passenger.</b> Muon on W<sub>Q</sub>W<sub>K</sub> triples the scoring circuit’s stable rank (6.7 → 21.0) and buys nothing.</li>
+    </ul>
+  </section>
+
+  <section id="controls">
+    <h2><span class="sec">§5</span>Three controls</h2>
+    <div class="trio">
+      <figure class="fig">
+        <p class="label">Rank is not the knob</p>
+        <div class="chart" data-chart="rankreg" role="img" aria-label="AdamW with a value-circuit rank penalty reaches Muon's stable rank of about 64 from penalty 1e-3, while its loss rises from 3.350 to 3.549."></div>
+        <figcaption>AdamW with a penalty on σ<sub>1</sub> of the value circuit reaches Muon’s rank, but its loss only gets worse.</figcaption>
+      </figure>
+      <figure class="fig">
+        <p class="label">Holds across head counts</p>
+        <table class="nums">
+          <thead><tr><th>heads</th><th class="muon">Muon</th><th class="adam">AdamW</th><th class="cross">cross</th></tr></thead>
+          <tbody>
+            <tr><td>3</td><td>0.625</td><td>0.594</td><td>0.595</td></tr>
+            <tr><td>6</td><td>0.618</td><td>0.593</td><td>0.592</td></tr>
+            <tr><td>12</td><td>0.611</td><td>0.573</td><td>0.577</td></tr>
+          </tbody>
+        </table>
+        <figcaption>Width fixed. Cross-optimizer match stays at the AdamW ceiling; Muon stays more reproducible.</figcaption>
+      </figure>
+      <figure class="fig">
+        <p class="label">The metric can move</p>
+        <div class="chart" data-chart="layers" role="img" aria-label="Matching layer 6 against layer 3 or 9 drops the score by 0.03 to 0.05 for both optimizers."></div>
+        <figcaption>One seed pair. Changing layer drops the score 0.03–0.05; changing optimizer drops it 0.001.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section id="scope">
+    <h2><span class="sec">§6</span>Scope</h2>
+    <p>
+      This is a small-scale study by design: most causal runs are 124M parameters with three seeds, with checks at 350M; one SAE family (top-k, firing-pattern matching); one dataset (FineWeb, 2.67B tokens). The value-circuit result is sufficiency plus loss-level necessity at 124M. Whether a selective-Muon recipe pays off in wall-clock at scale is open.
+    </p>
+    <p>
+      Every run’s log, the matching outputs and the scripts are in the <a href="https://github.com/maincodeMax/muon-feature-study">repository</a>.
+    </p>
+  </section>
+
+  <section id="cite">
+    <h2><span class="sec">§7</span>Cite</h2>
+    <div class="bib">
+<pre id="bibtex">@inproceedings{twelftree2026muon,
+  title     = {Where Muon's Advantage Lives: Small-Scale Causal
+               Localization of an Optimizer's Effect on Learned Features},
+  author    = {Twelftree, Maxwell and Lemphers, David and
+               Zhang, Zeyu and Yang, Yue},
+  booktitle = {MOSS Workshop at COLM},
+  year      = {2026},
+  url       = {https://openreview.net/forum?id=j9bpNGbHDS}
+}</pre>
+      <button class="copy" id="copy" type="button"><span class="copy-a">copy</span><span class="copy-b" aria-hidden="true">copied</span></button>
+    </div>
+  </section>
+
+</main>
+
+<footer class="colophon">
+  <hr class="double">
+  <div class="foot">
+    <img src="maincode-logo.svg" alt="Maincode" width="46" height="34">
+    <p>
+      Maincode, Melbourne. Set in Spectral and Courier Prime.<br>
+      Presented at the MOSS workshop, COLM 2026.
+    </p>
+  </div>
+</footer>
+
+<script src="app.js" defer></script>
+</body>
+</html>
